@@ -1,65 +1,94 @@
-import { promisify } from "util";
-import { createClient } from "redis";
+#!/usr/bin/node
 
-/**
- * Represents a Redis client.
- */
-class RedisClient {
-  /**
-   * Creates a new RedisClient instance.
-   */
+const { MongoClient } = require("mongodb");
+const mongo = require("mongodb");
+const { pwdHashed } = require("./utils");
+
+class DBClient {
   constructor() {
-    this.client = createClient();
-    this.isClientConnected = true;
-    this.client.on("error", (err) => {
-      console.error(
-        "Redis client failed to connect:",
-        err.message || err.toString()
-      );
-      this.isClientConnected = false;
-    });
-    this.client.on("connect", () => {
-      this.isClientConnected = true;
-    });
+    const host = process.env.DB_HOST ? process.env.DB_HOST : "localhost";
+    const port = process.env.DB_PORT ? process.env.DB_PORT : 27017;
+    this.database = process.env.DB_DATABASE
+      ? process.env.DB_DATABASE
+      : "files_manager";
+    const dbUrl = `mongodb://${host}:${port}`;
+    this.connected = false;
+    this.client = new MongoClient(dbUrl, { useUnifiedTopology: true });
+    this.client
+      .connect()
+      .then(() => {
+        this.connected = true;
+      })
+      .catch((err) => console.log(err.message));
   }
 
-  /**
-   * Checks if this client's connection to the Redis server is active.
-   * @returns {boolean}
-   */
   isAlive() {
-    return this.isClientConnected;
+    return this.connected;
   }
 
-  /**
-   * Retrieves the value of a given key.
-   * @param {String} key The key of the item to retrieve.
-   * @returns {String | Object}
-   */
-  async get(key) {
-    return promisify(this.client.GET).bind(this.client)(key);
+  async nbUsers() {
+    await this.client.connect();
+    const users = await this.client
+      .db(this.database)
+      .collection("users")
+      .countDocuments();
+    return users;
   }
 
-  /**
-   * Stores a key and its value along with an expiration time.
-   * @param {String} key The key of the item to store.
-   * @param {String | Number | Boolean} value The item to store.
-   * @param {Number} duration The expiration time of the item in seconds.
-   * @returns {Promise<void>}
-   */
-  async set(key, value, duration) {
-    await promisify(this.client.SETEX).bind(this.client)(key, duration, value);
+  async nbFiles() {
+    await this.client.connect();
+    const users = await this.client
+      .db(this.database)
+      .collection("files")
+      .countDocuments();
+    return users;
   }
 
-  /**
-   * Removes the value of a given key.
-   * @param {String} key The key of the item to remove.
-   * @returns {Promise<void>}
-   */
-  async del(key) {
-    await promisify(this.client.DEL).bind(this.client)(key);
+  async createUser(email, password) {
+    const hashedPwd = pwdHashed(password);
+    await this.client.connect();
+    const user = await this.client
+      .db(this.database)
+      .collection("users")
+      .insertOne({ email, password: hashedPwd });
+    return user;
+  }
+
+  async getUser(email) {
+    await this.client.connect();
+    const user = await this.client
+      .db(this.database)
+      .collection("users")
+      .find({ email })
+      .toArray();
+    if (!user.length) {
+      return null;
+    }
+    return user[0];
+  }
+
+  async getUserById(id) {
+    const _id = new mongo.ObjectID(id);
+    await this.client.connect();
+    const user = await this.client
+      .db(this.database)
+      .collection("users")
+      .find({ _id })
+      .toArray();
+    if (!user.length) {
+      return null;
+    }
+    return user[0];
+  }
+
+  async userExist(email) {
+    const user = await this.getUser(email);
+    if (user) {
+      return true;
+    }
+    return false;
   }
 }
 
-export const redisClient = new RedisClient();
-export default redisClient;
+const dbClient = new DBClient();
+module.exports = dbClient;
